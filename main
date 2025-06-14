@@ -1,0 +1,306 @@
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras import layers, models
+import json
+import re 
+
+# --- 1. Thiết lập Dữ liệu và Tiền xử lý ---
+
+def load_dictionary(filepath="animals.txt"): # Đã thay đổi mặc định từ 'words.txt' sang 'animals.txt'
+    """
+    Tải danh sách từ từ một tệp văn bản.
+    Mỗi từ nên nằm trên một dòng riêng biệt.
+    """
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            words = [word.strip().lower() for word in f if word.strip()]
+        print(f"Đã tải {len(words)} từ từ '{filepath}'.")
+        return sorted(list(set(words))) # Loại bỏ trùng lặp và sắp xếp
+    except FileNotFoundError:
+        print(f"Không tìm thấy tệp từ điển '{filepath}'. Sử dụng danh sách từ mẫu mặc định.")
+        # Danh sách từ mẫu nhỏ nếu không tìm thấy tệp
+        return [
+            "apple", "apply", "apricot", "banana", "bandana", "cat", "dog",
+            "elephant", "elegant", "energy", "enter", "father", "finish", "flower",
+            "grape", "grace", "great", "hello", "house", "happy", "light", "laugh",
+            "lemon", "mango", "mouse", "music", "night", "noble", "ocean", "orange",
+            "paper", "pencil", "queen", "quiet", "rabbit", "radio", "snake", "smile",
+            "table", "train", "under", "union", "violet", "violin", "water", "world",
+            "xray", "xylophone", "yellow", "young", "zebra", "zero"
+        ]
+
+# Tải từ điển. Đảm bảo bạn có tệp 'animals.txt' trong cùng thư mục hoặc cung cấp đường dẫn đầy đủ.
+# Nếu không có tệp, nó sẽ sử dụng danh sách mẫu nhỏ.
+word_list_for_training = load_dictionary()
+
+# Chuẩn bị tập hợp các ký tự và ánh xạ
+# Thêm một ký tự đặc biệt '<PAD>' để đệm các chuỗi có độ dài khác nhau
+chars = sorted(list(set("".join(word_list_for_training))))
+char_to_idx = {c: i + 1 for i, c in enumerate(chars)} # Bắt đầu từ 1, để 0 dành cho PAD
+char_to_idx['<PAD>'] = 0
+idx_to_char = {i: c for c, i in char_to_idx.items()}
+
+# Tìm độ dài từ tối đa trong từ điển để xác định kích thước đầu vào của mô hình
+max_len = max(len(word) for word in word_list_for_training)
+
+# Tạo dữ liệu huấn luyện (X) và nhãn (y) cho mô hình LSTM
+X, y = [], []
+for word in word_list_for_training:
+    for i in range(1, len(word)):
+        seq = word[:i]  # Chuỗi tiền tố (đầu vào)
+        next_char = word[i]  # Ký tự tiếp theo (nhãn/đầu ra mong muốn)
+
+        # Chuyển chuỗi tiền tố thành vector số và thêm đệm đến max_len
+        # Sử dụng .get() để xử lý ký tự không có trong chars (nếu có, dù hiếm)
+        encoded_seq = [char_to_idx.get(c, char_to_idx['<PAD>']) for c in seq]
+        padded_seq = encoded_seq + [char_to_idx['<PAD>']] * (max_len - len(encoded_seq))
+        X.append(padded_seq)
+
+        # Chuyển ký tự tiếp theo thành số
+        y.append(char_to_idx.get(next_char, char_to_idx['<PAD>']))
+
+X = np.array(X)
+y = np.array(y)
+
+# --- 2. Xây dựng và Huấn luyện Mô hình LSTM ---
+
+# Kích thước cho lớp nhúng (Embedding layer)
+embedding_dim = 64 # Tăng kích thước nhúng có thể cải thiện khả năng học
+
+# Xây dựng kiến trúc mô hình tuần tự (Sequential model)
+model = models.Sequential([
+    # Lớp Embedding: Chuyển các chỉ số ký tự thành các vector dày đặc
+    # Đã loại bỏ 'input_length' theo cảnh báo (Keras tự suy luận)
+    layers.Embedding(input_dim=len(chars) + 1, output_dim=embedding_dim),
+    
+    # Lớp LSTM hai chiều đầu tiên: Học các mẫu từ cả hai hướng của chuỗi.
+    # 'return_sequences=True' để truyền đầu ra chuỗi cho lớp LSTM tiếp theo.
+    layers.Bidirectional(layers.LSTM(128, return_sequences=True)),
+    
+    # Lớp LSTM thứ hai: Xử lý thêm các biểu diễn chuỗi.
+    # 'return_sequences=False' vì đây là lớp LSTM cuối cùng trước lớp Dense đầu ra.
+    layers.LSTM(64),
+    
+    # Lớp Dense (đầu ra): Dự đoán xác suất cho mỗi ký tự có thể có.
+    # 'softmax' để có phân phối xác suất trên tất cả các ký tự.
+    layers.Dense(len(chars) + 1, activation='softmax') # +1 cho ký tự PAD
+])
+
+# Biên dịch mô hình: Cấu hình quy trình học của mô hình
+model.compile(optimizer='adam', # Thuật toán tối ưu hóa phổ biến
+              loss='sparse_categorical_crossentropy', # Hàm mất mát cho phân loại nhiều lớp với nhãn số nguyên
+              metrics=['accuracy']) # Đánh giá độ chính xác trong quá trình huấn luyện
+
+print("Bắt đầu huấn luyện mô hình LSTM...")
+# Huấn luyện mô hình
+# 'verbose=0' để không in quá nhiều chi tiết trong quá trình huấn luyện
+# 'validation_split' dành một phần dữ liệu để đánh giá hiệu suất mô hình
+history = model.fit(X, y, epochs=150, batch_size=32, validation_split=0.2, verbose=0)
+print("Huấn luyện mô hình LSTM hoàn tất.")
+val_accuracy = history.history['val_accuracy'][-1]
+print(f"Độ chính xác trên tập validation của LSTM: {val_accuracy:.4f}")
+
+# --- 3. Hàm dự đoán từ tiếp theo và sinh từ bằng LSTM ---
+
+def predict_next_char_with_lstm(sequence_prefix):
+    """
+    Sử dụng mô hình LSTM để dự đoán ký tự tiếp theo của một chuỗi tiền tố.
+    """
+    # Chuyển tiền tố thành định dạng số và thêm đệm
+    encoded_seq = [char_to_idx.get(c, char_to_idx['<PAD>']) for c in sequence_prefix]
+    padded_seq = encoded_seq + [char_to_idx['<PAD>']] * (max_len - len(encoded_seq))
+    
+    # Reshape cho đầu vào mô hình (1 mẫu, max_len ký tự)
+    seq_input = np.array(padded_seq).reshape(1, max_len)
+
+    # Dự đoán xác suất của ký tự tiếp theo
+    predictions = model.predict(seq_input, verbose=0)[0]
+    
+    # Đảm bảo không chọn ký tự đệm làm dự đoán hợp lệ
+    predictions[char_to_idx['<PAD>']] = -1 # Gán giá trị thấp để không được chọn
+
+    # Chọn ký tự có xác suất cao nhất
+    predicted_char_idx = np.argmax(predictions)
+    return idx_to_char[predicted_char_idx]
+
+def generate_word_with_lstm(start_sequence, target_length):
+    """
+    Sinh một từ hoàn chỉnh có độ dài mong muốn bằng cách lặp lại việc dự đoán ký tự tiếp theo.
+    """
+    generated_word_chars = list(start_sequence)
+    current_sequence = list(start_sequence)
+
+    # Lặp cho đến khi đạt được độ dài mục tiêu hoặc vượt quá max_len
+    while len(generated_word_chars) < target_length:
+        if not current_sequence: # Xử lý trường hợp chuỗi trống ban đầu
+            break
+
+        # Sử dụng predict_next_char_with_lstm để lấy ký tự tiếp theo
+        next_char = predict_next_char_with_lstm("".join(current_sequence))
+        
+        if next_char == '<PAD>': # Dừng nếu mô hình dự đoán ký tự đệm
+            break
+
+        generated_word_chars.append(next_char)
+        current_sequence.append(next_char)
+
+        # Giới hạn chiều dài của current_sequence để phù hợp với max_len của mô hình
+        if len(current_sequence) > max_len:
+            current_sequence = current_sequence[-max_len:] # Chỉ giữ phần cuối
+
+    return "".join(generated_word_chars)
+
+
+# --- 4. Logic Giải ô chữ chính ---
+
+def solve_crossword_word(known_letters_pattern, word_length, dictionary=None, use_lstm_ranking=False):
+    """
+    Dự đoán từ ô chữ dựa trên các chữ cái đã biết và độ dài từ.
+
+    Args:
+        known_letters_pattern (dict): Một dictionary với khóa là vị trí (số nguyên, bắt đầu từ 0)
+                                      và giá trị là chữ cái đã biết (ví dụ: {0: 'c', 2: 't'}).
+                                      Các vị trí trống không cần đưa vào dict.
+        word_length (int): Độ dài mong muốn của từ ô chữ.
+        dictionary (list): Danh sách các từ để tìm kiếm. Mặc định là từ điển đã tải.
+        use_lstm_ranking (bool): Nếu True, sẽ sử dụng mô hình LSTM để sắp xếp các từ khớp.
+
+    Returns:
+        list: Danh sách các từ có thể là đáp án, được sắp xếp theo mức độ phù hợp (nếu dùng LSTM).
+    """
+    if dictionary is None:
+        dictionary = word_list_for_training # Sử dụng từ điển đã được load
+
+    candidate_words = []
+
+    # Bước 1: Lọc từ điển theo độ dài mong muốn
+    filtered_by_length = [word for word in dictionary if len(word) == word_length]
+
+    # Bước 2: Lọc các từ theo mẫu chữ cái đã biết
+    for word in filtered_by_length:
+        is_match = True
+        for position, char in known_letters_pattern.items():
+            if position >= len(word) or word[position] != char.lower():
+                is_match = False
+                break
+        if is_match:
+            candidate_words.append(word)
+
+    # Bước 3 (Tùy chọn): Sắp xếp các từ ứng cử viên bằng mô hình LSTM
+    if use_lstm_ranking and candidate_words:
+        ranked_candidates = []
+        for word in candidate_words:
+            # Tạo một tiền tố 'best-effort' cho LSTM
+            temp_prefix_chars = [''] * word_length # Mảng ký tự để xây dựng mẫu
+            for pos, char in known_letters_pattern.items():
+                temp_prefix_chars[pos] = char.lower()
+
+            # Tìm vị trí đầu tiên còn trống (chưa biết) để LSTM có thể bắt đầu sinh
+            first_unknown_pos = -1
+            for i in range(word_length):
+                if temp_prefix_chars[i] == '':
+                    first_unknown_pos = i
+                    break
+            
+            # Nếu không có vị trí trống nào, từ đã hoàn chỉnh, cho điểm cao nhất
+            if first_unknown_pos == -1:
+                ranked_candidates.append((word, 1.0))
+                continue
+
+            # Xây dựng chuỗi bắt đầu cho LSTM
+            start_seq_for_lstm = "".join(temp_prefix_chars[:first_unknown_pos])
+            
+            # Nếu start_seq_for_lstm vẫn rỗng (tức là vị trí trống đầu tiên là 0),
+            # chúng ta có thể sử dụng chữ cái đã biết ở vị trí 0 (nếu có),
+            # hoặc đơn giản là chữ cái đầu tiên của từ ứng cử viên.
+            if not start_seq_for_lstm:
+                if 0 in known_letters_pattern:
+                    start_seq_for_lstm = known_letters_pattern[0].lower()
+                else:
+                    # Nếu vị trí 0 không có trong known_letters_pattern và start_seq_for_lstm rỗng,
+                    # dùng chữ cái đầu tiên của từ ứng cử viên như một điểm khởi đầu hợp lý.
+                    start_seq_for_lstm = word[0] if word else '' # Đảm bảo word không rỗng
+
+            # Sử dụng LSTM để "hoàn thành" từ từ tiền tố
+            generated_prediction = generate_word_with_lstm(start_seq_for_lstm, word_length)
+            
+            # Tính điểm tương đồng giữa từ sinh ra và từ ứng cử viên
+            # Điểm cao hơn cho biết mô hình "cảm thấy" từ này khả thi hơn
+            similarity_score = 0
+            if len(generated_prediction) == len(word):
+                for i in range(len(word)):
+                    if generated_prediction[i] == word[i]:
+                        similarity_score += 1
+                similarity_score /= len(word)
+            
+            ranked_candidates.append((word, similarity_score))
+        
+        # Sắp xếp các từ ứng cử viên theo điểm tương đồng giảm dần
+        ranked_candidates.sort(key=lambda x: x[1], reverse=True)
+        return [word for word, score in ranked_candidates]
+
+    return candidate_words
+
+# --- 5. Ví dụ sử dụng ---
+
+if __name__ == "__main__":
+    print("\n--- Thực hiện các ví dụ dự đoán ô chữ ---")
+
+    # Ví dụ 1: Từ có 3 chữ, chữ cái đầu là 'c'
+    known_1 = {0: 'c'}
+    length_1 = 3
+    print(f"\nVí dụ 1: Mẫu: '{known_1}', Độ dài: {length_1}")
+    predicted_words_1 = solve_crossword_word(known_1, length_1, use_lstm_ranking=False)
+    print(f"Từ khả thi (chỉ lọc): {predicted_words_1}")
+
+    # Ví dụ 2: Từ có 3 chữ, chữ 'c' ở 0, 't' ở 2
+    known_2 = {0: 'c', 2: 't'}
+    length_2 = 3
+    print(f"\nVí dụ 2: Mẫu: '{known_2}', Độ dài: {length_2}")
+    predicted_words_2 = solve_crossword_word(known_2, length_2, use_lstm_ranking=False)
+    print(f"Từ khả thi (chỉ lọc): {predicted_words_2}")
+
+    # Ví dụ 3: Từ có 5 chữ, chữ 'a' ở 0, 'e' ở 4 (sử dụng xếp hạng LSTM)
+    known_3 = {0: 'a', 4: 'e'}
+    length_3 = 5
+    print(f"\nVí dụ 3: Mẫu: '{known_3}', Độ dài: {length_3}")
+    predicted_words_3 = solve_crossword_word(known_3, length_3, use_lstm_ranking=True)
+    print(f"Từ khả thi (có xếp hạng LSTM): {predicted_words_3}")
+
+    # Ví dụ 4: Từ có 6 chữ, chữ 'e' ở 0, 't' ở 4 (sử dụng xếp hạng LSTM)
+    known_4 = {0: 'e', 4: 't'}
+    length_4 = 6
+    print(f"\nVí dụ 4: Mẫu: '{known_4}', Độ dài: {length_4}")
+    predicted_words_4 = solve_crossword_word(known_4, length_4, use_lstm_ranking=True)
+    print(f"Từ khả thi (có xếp hạng LSTM): {predicted_words_4}")
+
+    # --- 6. Lưu kết quả vào tệp JSON ---
+    results = {
+        "validation_accuracy_lstm": float(val_accuracy),
+        "example_1": {
+            "known_pattern": known_1,
+            "word_length": length_1,
+            "predicted_words": predicted_words_1
+        },
+        "example_2": {
+            "known_pattern": known_2,
+            "word_length": length_2,
+            "predicted_words": predicted_words_2
+        },
+        "example_3": {
+            "known_pattern": known_3,
+            "word_length": length_3,
+            "predicted_words": predicted_words_3
+        },
+        "example_4": {
+            "known_pattern": known_4,
+            "word_length": length_4,
+            "predicted_words": predicted_words_4
+        }
+    }
+
+    output_filename = "crossword_prediction_results_rewritten.json"
+    with open(output_filename, "w", encoding="utf-8") as file:
+        json.dump(results, file, indent=4, ensure_ascii=False)
+
+    print(f"\nKết quả cuối cùng đã được xuất ra file '{output_filename}'")
