@@ -7,3 +7,4 @@ Prediction: Given an input like "ca", the model predicts the next character (e.g
 Real-world application: This model can be extended to predict entire words by repeatedly generating the next character or by using crossword clues as additional input.
 
 Update more animals
+Customize appication
