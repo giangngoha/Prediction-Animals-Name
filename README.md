@@ -9,3 +9,4 @@ Real-world application: This model can be extended to predict entire words by re
 Update more animals
 Customize appication
 Optimize 
+Optimize UX/UI
