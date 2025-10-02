@@ -10,3 +10,4 @@ Update more animals
 Customize appication
 Optimize 
 Optimize UX/UI
+Update more animals
