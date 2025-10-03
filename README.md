@@ -4,7 +4,10 @@ Model: An LSTM model learns to predict the next character based on the previous 
 
 Prediction: Given an input like "ca", the model predicts the next character (e.g., "t" to complete the word "cat").
 
+Prediction: Given an input like "do", the model predicts the next character (e.g., "g" to complete the word "dog").
+
 Real-world application: This model can be extended to predict entire words by repeatedly generating the next character or by using crossword clues as additional input.
+
 
 Update more animals
 Customize appication
