@@ -16,3 +16,4 @@ Optimize UX/UI
 Update more animals
 Commit 1
 Update 1
+Update 2
