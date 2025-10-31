@@ -14,4 +14,3 @@ Customize appication
 Optimize 
 Optimize UX/UI
 Update more animals
-Commit 
