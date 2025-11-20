@@ -14,4 +14,4 @@ Customize appication
 Optimize 
 Optimize UX/UI
 Update more animals
-Update 2
+Update 1
